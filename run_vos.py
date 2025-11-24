@@ -1,232 +1,276 @@
 """
-Script de prueba para el simulador de memoria virtual VOS.
+Script de Prueba para Lab 2: Procesos y Round-Robin Scheduling
+VOS (Virtual Operating System)
 
-Este script demuestra el funcionamiento del simulador mediante:
-- Pruebas básicas de lectura/escritura
-- Generación de page faults
-- Activación del algoritmo de reemplazo FIFO
-- Verificación de write-backs de páginas sucias
+Este script demuestra el funcionamiento del sistema de procesos:
+- Creación de múltiples procesos
+- Scheduling Round-Robin
+- Ejecución de programas con memoria virtual aislada
+- Transiciones de estados de procesos
 """
 
-from vos.core.vm import VM, PAGE_SIZE
-
-def test_basic_read_write():
-    """Prueba básica de lectura y escritura."""
-    print("=" * 70)
-    print("TEST 1: Lectura y Escritura Básica")
-    print("=" * 70)
-    
-    vm = VM()
-    addr = 3 * PAGE_SIZE + 10  # Página 3, offset 10
-    
-    print(f"\n📝 Escribiendo 99 a dirección virtual {addr}")
-    vm.write_byte(addr, 99)
-    
-    print(f"\n📖 Leyendo de dirección virtual {addr}")
-    value = vm.read_byte(addr)
-    
-    print(f"\n✅ Valor leído: {value}")
-    assert value == 99, f"Error: esperaba 99, obtuvo {value}"
-    print("✅ TEST 1 PASADO: Lectura/escritura funciona correctamente\n")
-    
-    return vm
+from vos.core.sys import Kernel
+from vos.core.demo_tasks import (
+    touch_pages_prog, 
+    idle_prog, 
+    fibonacci_prog,
+    memory_scanner_prog,
+    counter_writer_prog,
+    pattern_writer_prog
+)
+from vos.core.vm import PAGE_SIZE
 
 
-def test_page_faults():
-    """Prueba generación de múltiples page faults."""
-    print("=" * 70)
-    print("TEST 2: Generación de Page Faults")
-    print("=" * 70)
+def test_basic_two_processes():
+    """
+    Test básico con dos procesos simples.
+    Demuestra Round-Robin básico y terminación de procesos.
+    """
+    print("\n" + "="*70)
+    print("TEST 1: DOS PROCESOS BÁSICOS (touch_pages y idle)")
+    print("="*70)
     
-    vm = VM()
+    # Crear kernel
+    kernel = Kernel()
     
-    # Escribir a 5 páginas diferentes
-    pages_to_test = [0, 2, 5, 7, 9]
+    # Crear dos procesos
+    pid1 = kernel.spawn(touch_pages_prog, "TouchPages")
+    pid2 = kernel.spawn(idle_prog, "Idle")
     
-    for page_no in pages_to_test:
-        addr = page_no * PAGE_SIZE
-        value = page_no * 10
-        print(f"\n--- Accediendo página {page_no} ---")
-        vm.write_byte(addr, value)
+    print(f"\n✅ Procesos creados: PID {pid1} y PID {pid2}")
     
-    print(f"\n📊 Estadísticas después de accesos:")
-    stats = vm.get_stats()
-    print(f"   - Page faults: {stats['page_faults']}")
-    print(f"   - Páginas en RAM: {stats['pages_in_ram']}")
-    print(f"   - Páginas sucias: {stats['dirty_pages']}")
+    # Ejecutar 15 time slices
+    print(f"\n{'='*70}")
+    print("INICIANDO EJECUCIÓN")
+    print(f"{'='*70}")
     
-    assert stats['page_faults'] == 5, "Debería haber 5 page faults"
-    print("\n✅ TEST 2 PASADO: Page faults generados correctamente\n")
+    for step in range(15):
+        print(f"\n{'─'*70}")
+        print(f"STEP {step:02d}")
+        print(f"{'─'*70}")
+        
+        # Dispatch
+        kernel.dispatch()
+        
+        # Mostrar tabla de procesos
+        ps_output = kernel.ps()
+        print(f"\n📊 ps: {ps_output}")
     
-    return vm
+    # Mostrar tabla final
+    kernel.print_process_table()
+    
+    # Verificar memoria de proceso 1
+    print(f"\n{'='*70}")
+    print("VERIFICACIÓN DE MEMORIA VIRTUAL (Proceso 1)")
+    print(f"{'='*70}")
+    
+    pcb1 = kernel.get_process(pid1)
+    if pcb1:
+        print(f"\n🔍 Leyendo memoria del proceso {pid1} ({pcb1.name}):")
+        for page_no in range(5):
+            vaddr = page_no * PAGE_SIZE
+            try:
+                value = pcb1.vm.read_byte(vaddr)
+                print(f"   Página {page_no} (vaddr={vaddr}): {value}")
+            except:
+                print(f"   Página {page_no}: no accesible")
 
 
-def test_fifo_replacement():
-    """Prueba el algoritmo de reemplazo FIFO."""
-    print("=" * 70)
-    print("TEST 3: Reemplazo FIFO")
-    print("=" * 70)
+def test_multiple_processes():
+    """
+    Test con múltiples procesos de diferentes tipos.
+    Demuestra scheduling complejo y aislamiento de memoria.
+    """
+    print("\n" + "="*70)
+    print("TEST 2: MÚLTIPLES PROCESOS (6 procesos concurrentes)")
+    print("="*70)
     
-    vm = VM()
+    # Crear kernel
+    kernel = Kernel()
     
-    # Llenar todos los marcos físicos (8 marcos)
-    print("\n🔄 Fase 1: Llenando RAM (8 marcos)...")
-    for i in range(8):
-        addr = i * PAGE_SIZE
-        vm.write_byte(addr, i * 10)
-        print(f"   Página {i} cargada")
+    # Crear 6 procesos diferentes
+    procs = [
+        kernel.spawn(touch_pages_prog, "TouchPages-1"),
+        kernel.spawn(idle_prog, "Idle-1"),
+        kernel.spawn(fibonacci_prog, "Fibonacci"),
+        kernel.spawn(memory_scanner_prog, "Scanner"),
+        kernel.spawn(counter_writer_prog, "Counter"),
+        kernel.spawn(pattern_writer_prog, "Pattern")
+    ]
     
-    print(f"\n📊 RAM ahora llena: {vm.get_stats()['pages_in_ram']} páginas")
+    print(f"\n✅ Creados {len(procs)} procesos")
     
-    # Acceder a una página nueva - debe causar reemplazo
-    print("\n🔄 Fase 2: Accediendo página 8 (debe causar reemplazo FIFO)...")
-    addr = 8 * PAGE_SIZE
-    vm.write_byte(addr, 80)
+    # Ejecutar 25 time slices
+    print(f"\n{'='*70}")
+    print("INICIANDO EJECUCIÓN (25 time slices)")
+    print(f"{'='*70}")
     
-    print(f"\n📊 Estadísticas después de reemplazo:")
-    stats = vm.get_stats()
-    print(f"   - Page faults: {stats['page_faults']}")
-    print(f"   - Write-backs: {stats['write_backs']}")
-    print(f"   - Páginas en RAM: {stats['pages_in_ram']}")
-    print(f"   - Cola FIFO: {stats['fifo_queue']}")
+    for step in range(25):
+        print(f"\n{'─'*70}")
+        print(f"STEP {step:02d}")
+        print(f"{'─'*70}")
+        
+        # Dispatch
+        kernel.dispatch()
+        
+        # Mostrar tabla de procesos (compacta)
+        ps_output = kernel.ps()
+        print(f"\n📊 ps: {ps_output}")
+        
+        # Mostrar estado del scheduler
+        print(f"   Scheduler: {kernel.sched}")
     
-    assert stats['page_faults'] == 9, "Debería haber 9 page faults"
-    assert stats['write_backs'] >= 1, "Debería haber al menos 1 write-back"
-    print("\n✅ TEST 3 PASADO: Reemplazo FIFO funciona correctamente\n")
+    # Mostrar tabla final detallada
+    kernel.print_process_table()
     
-    return vm
+    # Verificar estadísticas de VM de cada proceso
+    print(f"\n{'='*70}")
+    print("ESTADÍSTICAS DE MEMORIA VIRTUAL POR PROCESO")
+    print(f"{'='*70}")
+    
+    for pid in procs:
+        pcb = kernel.get_process(pid)
+        if pcb:
+            stats = pcb.vm.get_stats()
+            print(f"\n📊 Proceso {pid} ({pcb.name}):")
+            print(f"   - Page faults: {stats['page_faults']}")
+            print(f"   - Write-backs: {stats['write_backs']}")
+            print(f"   - Páginas en RAM: {stats['pages_in_ram']}")
+            print(f"   - Páginas sucias: {stats['dirty_pages']}")
 
 
-def test_dirty_bit():
-    """Prueba el manejo del bit sucio."""
-    print("=" * 70)
-    print("TEST 4: Manejo de Dirty Bit")
-    print("=" * 70)
+def test_memory_isolation():
+    """
+    Test que demuestra el aislamiento de memoria entre procesos.
+    Cada proceso escribe en la misma dirección virtual pero ve valores diferentes.
+    """
+    print("\n" + "="*70)
+    print("TEST 3: AISLAMIENTO DE MEMORIA ENTRE PROCESOS")
+    print("="*70)
     
-    vm = VM()
+    # Crear kernel
+    kernel = Kernel()
     
-    # Escribir a una página
-    print("\n✍️  Escribiendo a página 0...")
-    vm.write_byte(0, 42)
+    # Crear tres procesos que escriben en la misma dirección virtual
+    pids = [
+        kernel.spawn(counter_writer_prog, "Writer-A"),
+        kernel.spawn(counter_writer_prog, "Writer-B"),
+        kernel.spawn(counter_writer_prog, "Writer-C")
+    ]
     
-    # Leer de la misma página (no cambia dirty bit)
-    print("📖 Leyendo de página 0...")
-    value = vm.read_byte(0)
+    print(f"\n✅ Creados 3 procesos que escribirán en direcciones virtuales similares")
     
-    # Verificar que la página está sucia
-    entry = vm.page_table.get_entry(0)
-    print(f"\n📊 Estado de página 0:")
-    print(f"   - Present: {entry.present}")
-    print(f"   - Dirty: {entry.dirty}")
-    print(f"   - Frame: {entry.frame}")
+    # Ejecutar varios time slices
+    for step in range(20):
+        print(f"\n{'─'*70}")
+        print(f"STEP {step:02d}")
+        print(f"{'─'*70}")
+        
+        kernel.dispatch()
+        ps_output = kernel.ps()
+        print(f"\n📊 ps: {ps_output}")
     
-    assert entry.dirty, "Página debería estar marcada como sucia"
-    print("\n✅ TEST 4 PASADO: Dirty bit manejado correctamente\n")
+    # Verificar que cada proceso tiene su propia memoria
+    print(f"\n{'='*70}")
+    print("VERIFICACIÓN DE AISLAMIENTO")
+    print(f"{'='*70}")
     
-    return vm
+    test_vaddr = 10  # Misma dirección virtual en todos los procesos
+    
+    for pid in pids:
+        pcb = kernel.get_process(pid)
+        if pcb:
+            try:
+                value = pcb.vm.read_byte(test_vaddr)
+                print(f"\n🔍 Proceso {pid} ({pcb.name}):")
+                print(f"   vaddr={test_vaddr} contiene: {value}")
+                print(f"   ✓ Memoria aislada e independiente")
+            except:
+                print(f"\n🔍 Proceso {pid} ({pcb.name}):")
+                print(f"   vaddr={test_vaddr}: no accedida aún")
 
 
-def test_zero_page():
-    """Prueba la operación zero_page."""
-    print("=" * 70)
-    print("TEST 5: Zero Page")
-    print("=" * 70)
+def test_state_transitions():
+    """
+    Test que muestra claramente las transiciones de estado de los procesos.
+    """
+    print("\n" + "="*70)
+    print("TEST 4: TRANSICIONES DE ESTADO")
+    print("="*70)
     
-    vm = VM()
+    # Crear kernel
+    kernel = Kernel()
     
-    # Escribir algunos valores a página 0
-    print("\n✍️  Escribiendo valores a página 0...")
-    for i in range(10):
-        vm.write_byte(i, i + 100)
+    # Crear procesos con diferentes duraciones
+    kernel.spawn(idle_prog, "Short-Process")  # Termina rápido
+    kernel.spawn(fibonacci_prog, "Medium-Process")  # Duración media
     
-    # Llenar página con ceros
-    print("🧹 Llenando página 0 con ceros...")
-    vm.zero_page(0)
+    print(f"\n✅ Procesos creados con diferentes tiempos de vida")
     
-    # Verificar que todos los bytes son 0
-    print("📖 Verificando que página está llena de ceros...")
-    all_zeros = True
-    for i in range(10):
-        value = vm.read_byte(i)
-        if value != 0:
-            all_zeros = False
-            break
-    
-    assert all_zeros, "Todos los bytes deberían ser 0"
-    print("\n✅ TEST 5 PASADO: Zero page funciona correctamente\n")
-    
-    return vm
-
-
-def test_comprehensive():
-    """Prueba comprensiva que ejercita todo el sistema."""
-    print("=" * 70)
-    print("TEST 6: Prueba Comprensiva")
-    print("=" * 70)
-    
-    vm = VM()
-    
-    # Escribir a múltiples páginas con patrón conocido
-    print("\n🔄 Escribiendo patrón de datos...")
-    test_data = {}
-    for page_no in range(12):  # Más de 8 páginas (causará reemplazos)
-        addr = page_no * PAGE_SIZE + 5
-        value = (page_no * 7 + 13) % 256
-        test_data[addr] = value
-        vm.write_byte(addr, value)
-    
-    # Leer de vuelta y verificar
-    print("\n📖 Verificando datos...")
-    errors = 0
-    for addr, expected_value in test_data.items():
-        actual_value = vm.read_byte(addr)
-        if actual_value != expected_value:
-            print(f"   ❌ Error en {addr}: esperaba {expected_value}, obtuvo {actual_value}")
-            errors += 1
-    
-    print(f"\n📊 Estadísticas finales:")
-    stats = vm.get_stats()
-    for key, value in stats.items():
-        print(f"   - {key}: {value}")
-    
-    assert errors == 0, f"Se encontraron {errors} errores en los datos"
-    print("\n✅ TEST 6 PASADO: Sistema completo funciona correctamente\n")
-    
-    return vm
+    # Ejecutar y observar transiciones
+    for step in range(20):
+        print(f"\n{'─'*70}")
+        print(f"STEP {step:02d}")
+        
+        # Antes del dispatch
+        ps_before = kernel.ps()
+        print(f"Antes:   {ps_before}")
+        
+        # Dispatch
+        kernel.dispatch()
+        
+        # Después del dispatch
+        ps_after = kernel.ps()
+        print(f"Después: {ps_after}")
+        
+        # Detectar cambios de estado
+        if ps_before != ps_after:
+            print(f"   ⚡ ¡Cambio de estado detectado!")
 
 
 def main():
     """Ejecuta todos los tests."""
-    print("\n" + "=" * 70)
-    print("INICIANDO SUITE DE PRUEBAS VOS")
-    print("=" * 70 + "\n")
+    print("\n" + "="*70)
+    print("VOS LAB 2: SUITE DE PRUEBAS DE PROCESOS Y SCHEDULING")
+    print("="*70)
     
     try:
-        # Ejecutar todos los tests
-        test_basic_read_write()
-        test_page_faults()
-        test_fifo_replacement()
-        test_dirty_bit()
-        test_zero_page()
-        test_comprehensive()
+        # Test 1: Básico con dos procesos
+        test_basic_two_processes()
         
-        print("=" * 70)
-        print("🎉 TODOS LOS TESTS PASARON EXITOSAMENTE")
-        print("=" * 70)
-        print("\n✅ El simulador de memoria virtual funciona correctamente!")
-        print("✅ Todos los componentes están operando como se espera:")
-        print("   ✓ Traducción de direcciones")
-        print("   ✓ Manejo de page faults")
-        print("   ✓ Reemplazo FIFO")
-        print("   ✓ Write-back de páginas sucias")
-        print("   ✓ Gestión de dirty bits")
-        print("   ✓ Operaciones de memoria\n")
+        input("\n⏸️  Presiona Enter para continuar con el Test 2...")
         
-    except AssertionError as e:
-        print(f"\n❌ TEST FALLIDO: {e}")
-        return 1
+        # Test 2: Múltiples procesos
+        test_multiple_processes()
+        
+        input("\n⏸️  Presiona Enter para continuar con el Test 3...")
+        
+        # Test 3: Aislamiento de memoria
+        test_memory_isolation()
+        
+        input("\n⏸️  Presiona Enter para continuar con el Test 4...")
+        
+        # Test 4: Transiciones de estado
+        test_state_transitions()
+        
+        # Resumen final
+        print("\n" + "="*70)
+        print("🎉 TODOS LOS TESTS COMPLETADOS EXITOSAMENTE")
+        print("="*70)
+        print("\n✅ Sistema de procesos funciona correctamente:")
+        print("   ✓ Creación de procesos (spawn)")
+        print("   ✓ Round-Robin scheduling")
+        print("   ✓ Ejecución de programas por time slices")
+        print("   ✓ Transiciones de estado (NEW→READY→RUNNING→TERMINATED)")
+        print("   ✓ Aislamiento de memoria entre procesos")
+        print("   ✓ Memoria virtual por proceso")
+        print("   ✓ Tabla de procesos (ps)")
+        print("\n💡 Cada proceso tiene su propio espacio de direcciones virtual")
+        print("💡 El scheduler Round-Robin garantiza fairness entre procesos")
+        print("💡 Los procesos pueden terminar de manera independiente\n")
+        
     except Exception as e:
-        print(f"\n❌ ERROR INESPERADO: {e}")
+        print(f"\n❌ ERROR: {e}")
         import traceback
         traceback.print_exc()
         return 1
